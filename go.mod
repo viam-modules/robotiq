@@ -1,4 +1,4 @@
-module MODULE
+module robotiq
 
 go 1.23.0
 
@@ -8,6 +8,7 @@ require (
 	github.com/edaniels/golinters v0.0.5-0.20220906153528-641155550742
 	github.com/fullstorydev/grpcurl v1.8.6
 	github.com/golangci/golangci-lint v1.61.0
+	github.com/pkg/errors v0.9.1
 	github.com/rhysd/actionlint v1.6.24
 	go.viam.com/rdk v0.48.2
 	go.viam.com/utils v0.1.110
@@ -208,7 +209,6 @@ require (
 	github.com/pion/stun v0.6.1 // indirect
 	github.com/pion/transport/v2 v2.2.10 // indirect
 	github.com/pion/turn/v2 v2.1.6 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/polyfloyd/go-errorlint v1.6.0 // indirect
