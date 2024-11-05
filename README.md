@@ -1,6 +1,6 @@
 # [`robotiq` module](https://github.com/viam-modules/robotiq)
 
-This [robotiq module](https://app.viam.com/module/viam/robotiq) implements a robotiq [2f-grippers gripper](<LINK TO HARDWARE>), used for <DESCRIPTION> using the [`rdk:component:gripper` API](https://docs.viam.com/appendix/apis/components/gripper/).
+This [robotiq module](https://app.viam.com/module/viam/robotiq) implements a robotiq [2f-grippers gripper](https://robotiq.com/products/adaptive-grippers#Two-Finger-Gripper), using the [`rdk:component:gripper` API](https://docs.viam.com/appendix/apis/components/gripper/).
 
 > [!NOTE]
 > Before configuring your gripper, you must [create a machine](https://docs.viam.com/cloud/machines/#add-a-new-machine).
@@ -14,7 +14,7 @@ On the new component panel, copy and paste the following attribute template into
 
 ```json
 {
-  <ATTRIBUTES>
+  "host": "<your-gripper-ip-address>"
 }
 ```
 
@@ -22,22 +22,21 @@ On the new component panel, copy and paste the following attribute template into
 
 The following attributes are available for `viam:robotiq:2f-grippers` grippers:
 
-<EXAMPLE !!>
 | Attribute | Type | Required? | Description |
 | --------- | ---- | --------- | ----------  |
-| `i2c_bus` | string | **Required** | The index of the I<sup>2</sup>C bus on the board that the gripper is wired to. |
-| `i2c_address` | string | Optional | Default: `0x77`. The [I<sup>2</sup>C device address](https://learn.adafruit.com/i2c-addresses/overview) of the gripper. |
+| `host` | string | **Required** | The host address of your gripper machine. |
 
 ## Example configuration
 
 ### `viam:robotiq:2f-grippers`
 ```json
   {
-      "name": "<your-robotiq-2f-grippers-gripper-name>",
+      "name": "<your-robotiq-2f-grippers-name>",
       "model": "viam:robotiq:2f-grippers",
       "type": "gripper",
       "namespace": "rdk",
       "attributes": {
+        "host": "0.0.0.0"
       },
       "depends_on": []
   }
