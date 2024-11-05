@@ -31,7 +31,7 @@ jobs:
           - arch: macos-latest
             image: ghcr.io/viamrobotics/rdk-devenv:arm64-cache
             platform: darwin/arm64
-            label: darwin/arm64
+            label: darwin
 
     runs-on: ${{ matrix.arch }}
 
