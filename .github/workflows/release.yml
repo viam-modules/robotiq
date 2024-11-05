@@ -43,14 +43,17 @@ jobs:
       with:
         go-version: 1.23
 
-    - name: Install canon
+    - name: Install canon (only for non-Darwin platforms)
+      if: ${{ matrix.label != 'darwin' }}
       run: |
         export PATH="$(go env GOPATH)/bin:$PATH"
         go install github.com/viamrobotics/canon@v1.0.0
 
     - name: Build and package
       run: |
-        canon --profile robotiq
+        if [ "${{ matrix.label }}" != "darwin" ]; then
+          canon --profile robotiq
+        fi
         TARGET_OS=${{ matrix.platform }} TARGET_ARCH=${{ matrix.arch }} make module
 
     - name: Upload robotiq module to registry
