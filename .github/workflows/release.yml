@@ -21,14 +21,13 @@ jobs:
       matrix:
         include:
           - arch: buildjet-8vcpu-ubuntu-2204
+            image: ghcr.io/viamrobotics/rdk-devenv:amd64-cache
             platform: linux/amd64
             label: amd64
           - arch: buildjet-8vcpu-ubuntu-2204-arm
+            image: ghcr.io/viamrobotics/rdk-devenv:arm64-cache
             platform: linux/arm64
             label: arm64
-          - arch: macos-latest
-            platform: darwin/arm64
-            label: darwin
 
     runs-on: ${{ matrix.arch }}
 
@@ -40,18 +39,15 @@ jobs:
       with:
         go-version: 1.23
 
-    - name: Install canon (only for non-Darwin platforms)
-      if: ${{ matrix.label != 'darwin' }}
+     - name: Install canon
       run: |
         export PATH="$(go env GOPATH)/bin:$PATH"
         go install github.com/viamrobotics/canon@v1.0.0
 
     - name: Build and package
       run: |
-        if [ "${{ matrix.label }}" != "darwin" ]; then
-          canon --profile robotiq
-        fi
-        make module
+        canon --profile robotiq
+        TARGET_OS=${{ matrix.platform }} TARGET_ARCH=${{ matrix.arch }} make module
 
     - name: Upload robotiq module to registry
       uses: viamrobotics/upload-module@main
