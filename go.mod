@@ -1,4 +1,4 @@
-module robotiq
+module github.com/viam-modules/robotiq
 
 go 1.23.0
 
