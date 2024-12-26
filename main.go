@@ -4,7 +4,7 @@ package main
 import (
 	"context"
 
-	"robotiq/robotiq"
+	"github.com/viam-modules/robotiq/robotiq"
 
 	"go.viam.com/rdk/components/gripper"
 	"go.viam.com/rdk/logging"
