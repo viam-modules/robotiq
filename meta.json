@@ -7,7 +7,8 @@
   "models": [
     {
       "api": "rdk:component:gripper",
-      "model": "viam:robotiq:2f-grippers"
+      "model": "viam:robotiq:2f-grippers",
+      "markdown_link" : "README.md#configure-your-2f-grippers-gripper"
     }
   ],
   "build": {
