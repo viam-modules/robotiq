@@ -5,10 +5,10 @@ This [robotiq module](https://app.viam.com/module/viam/robotiq) implements a rob
 > [!NOTE]
 > Before configuring your gripper, you must [create a machine](https://docs.viam.com/cloud/machines/#add-a-new-machine).
 
-## Configure your 2f-grippers gripper
-
 Navigate to the [**CONFIGURE** tab](https://docs.viam.com/configure/) of your [machine](https://docs.viam.com/fleet/machines/) in the [Viam app](https://app.viam.com/).
 [Add gripper / robotiq:2f-grippers to your machine](https://docs.viam.com/configure/#components).
+
+## Configure your 2f-grippers gripper
 
 On the new component panel, copy and paste the following attribute template into your gripper's attributes field:
 
