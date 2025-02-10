@@ -28,7 +28,6 @@ The following attributes are available for `viam:robotiq:2f-grippers` grippers:
 
 ## Example configuration
 
-### `viam:robotiq:2f-grippers`
 ```json
   {
       "name": "<your-robotiq-2f-grippers-name>",

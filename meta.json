@@ -8,7 +8,8 @@
     {
       "api": "rdk:component:gripper",
       "model": "viam:robotiq:2f-grippers",
-      "markdown_link" : "README.md#configure-your-2f-grippers-gripper"
+      "markdown_link" : "README.md#configure-your-2f-grippers-gripper",
+      "short_description" : "driver for robotiq 2f series grippers using serial or usb commands"
     }
   ],
   "build": {
