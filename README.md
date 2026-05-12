@@ -40,6 +40,20 @@ The following attributes are available for `viam:robotiq:2f-grippers` grippers:
   }
 ```
 
+### DoCommand
+
+Raw position control. Robotiq units: `0` = fully open, `255` = fully closed (bounded by the calibrated open/close limits detected at startup).
+
+```go
+// Get the current position
+resp, err := gripperComponent.DoCommand(context.Background(), map[string]interface{}{"get": true})
+// resp["pos"] contains the position
+
+// Move to a specific position
+resp, err := gripperComponent.DoCommand(context.Background(), map[string]interface{}{"set": 128.0})
+// resp["position"] contains the commanded position
+```
+
 ### Next Steps
 - To test your gripper, expand the **TEST** section of its configuration pane or go to the [**CONTROL** tab](https://docs.viam.com/fleet/control/).
 - To write code against your gripper, use one of the [available SDKs](https://docs.viam.com/sdks/).

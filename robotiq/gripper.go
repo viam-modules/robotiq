@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -304,4 +305,33 @@ func (g *robotiqGripper) ModelFrame() referenceframe.Model {
 // Geometries returns the geometries associated with robotiqGripper.
 func (g *robotiqGripper) Geometries(ctx context.Context, extra map[string]interface{}) ([]spatialmath.Geometry, error) {
 	return g.geometries, nil
+}
+
+// DoCommand exposes raw position control.
+// Raw Robotiq units: 0 = fully open, 255 = fully closed (bounded by calibrated openLimit/closeLimit).
+//   {"get": true}      -> {"pos": <int>}        current position
+//   {"set": <number>}  -> {"position": <int>}   move to raw position
+func (g *robotiqGripper) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if cmd["get"] == true {
+		raw, err := g.Get("POS")
+		if err != nil {
+			return nil, err
+		}
+		pos, err := strconv.Atoi(strings.TrimPrefix(raw, "POS "))
+		if err != nil {
+			return nil, errors.Wrapf(err, "bad POS response %q", raw)
+		}
+		return map[string]interface{}{"pos": pos}, nil
+	}
+	if posF, ok := cmd["set"].(float64); ok {
+		ctx, done := g.opMgr.New(ctx)
+		defer done()
+
+		pos := int(posF)
+		if _, err := g.SetPos(ctx, strconv.Itoa(pos)); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"position": pos}, nil
+	}
+	return map[string]interface{}{}, nil
 }
