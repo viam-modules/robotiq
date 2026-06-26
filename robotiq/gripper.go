@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -20,6 +21,9 @@ import (
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/utils"
 )
+
+// Per-call URCap socket deadline so a half-dead connection can't block forever.
+const sendTimeout = 5 * time.Second
 
 // Model for viam supported robotiq 2f-grippers.
 var Model = resource.NewModel("viam", "robotiq", "2f-grippers")
@@ -56,7 +60,9 @@ type robotiqGripper struct {
 	resource.Named
 	resource.AlwaysRebuild
 
-	conn net.Conn
+	// connMu serializes URCap access across the dial-per-send connections.
+	connMu sync.Mutex
+	host   string
 
 	openLimit  string
 	closeLimit string
@@ -67,19 +73,14 @@ type robotiqGripper struct {
 
 // newGripper instantiates a new Gripper of robotiqGripper type.
 func newGripper(ctx context.Context, conf resource.Config, host string, logger logging.Logger) (gripper.Gripper, error) {
-	conn, err := net.Dial("tcp", host+":63352")
-	if err != nil {
-		return nil, err
-	}
 	g := &robotiqGripper{
-		conf.ResourceName().AsNamed(),
-		resource.AlwaysRebuild{},
-		conn,
-		"0",
-		"255",
-		logger,
-		operation.NewSingleOperationManager(),
-		[]spatialmath.Geometry{},
+		Named:      conf.ResourceName().AsNamed(),
+		host:       host,
+		openLimit:  "0",
+		closeLimit: "255",
+		logger:     logger,
+		opMgr:      operation.NewSingleOperationManager(),
+		geometries: []spatialmath.Geometry{},
 	}
 
 	init := [][]string{
@@ -88,13 +89,11 @@ func newGripper(ctx context.Context, conf resource.Config, host string, logger l
 		{"FOR", "200"}, // force (0-255)
 		{"SPE", "255"}, // speed (0-255)
 	}
-	err = g.MultiSet(ctx, init)
-	if err != nil {
+	if err := g.MultiSet(ctx, init); err != nil {
 		return nil, err
 	}
 
-	err = g.Calibrate(ctx) // TODO(erh): should this live elsewhere?
-	if err != nil {
+	if err := g.Calibrate(ctx); err != nil { // TODO(erh): should this live elsewhere?
 		return nil, err
 	}
 
@@ -132,19 +131,45 @@ func (g *robotiqGripper) MultiSet(ctx context.Context, cmds [][]string) error {
 	return nil
 }
 
-// Send TODO.
+// Send dials a fresh TCP connection, writes one Robotiq command, reads the
+// response, and closes the connection. Persistent sockets to the PolyScope X
+// URCap stall on reads after idle periods or hot-swaps; fresh sockets always work.
 func (g *robotiqGripper) Send(msg string) (string, error) {
-	_, err := g.conn.Write([]byte(msg))
+	g.connMu.Lock()
+	defer g.connMu.Unlock()
+	conn, err := net.Dial("tcp", g.host+":63352")
 	if err != nil {
 		return "", err
 	}
-
-	res, err := g.read()
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(sendTimeout))
+	if _, err := conn.Write([]byte(msg)); err != nil {
+		return "", err
+	}
+	buf := make([]byte, 128)
+	x, err := conn.Read(buf)
 	if err != nil {
 		return "", err
 	}
+	if x > 100 {
+		return "", errors.Errorf("read too much: %d", x)
+	}
+	if x == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(string(buf[0:x])), nil
+}
 
-	return res, err
+// reactivate re-runs ACT/GTO/FOR/SPE. Use after the URCap was reset (e.g. a
+// tool changer swapping the attached gripper) and needs a fresh handshake.
+func (g *robotiqGripper) reactivate(ctx context.Context) error {
+	init := [][]string{
+		{"ACT", "1"},
+		{"GTO", "1"},
+		{"FOR", "200"},
+		{"SPE", "255"},
+	}
+	return g.MultiSet(ctx, init)
 }
 
 // Set TODO.
@@ -162,21 +187,6 @@ func (g *robotiqGripper) Set(what, to string) error {
 // Get TODO.
 func (g *robotiqGripper) Get(what string) (string, error) {
 	return g.Send(fmt.Sprintf("GET %s\r\n", what))
-}
-
-func (g *robotiqGripper) read() (string, error) {
-	buf := make([]byte, 128)
-	x, err := g.conn.Read(buf)
-	if err != nil {
-		return "", err
-	}
-	if x > 100 {
-		return "", errors.Errorf("read too much: %d", x)
-	}
-	if x == 0 {
-		return "", nil
-	}
-	return strings.TrimSpace(string(buf[0:x])), nil
 }
 
 // SetPos returns true iff reached desired position.
@@ -307,11 +317,18 @@ func (g *robotiqGripper) Geometries(ctx context.Context, extra map[string]interf
 	return g.geometries, nil
 }
 
-// DoCommand exposes raw position control.
+// DoCommand exposes raw position control and a manual reactivate action.
 // Raw Robotiq units: 0 = fully open, 255 = fully closed (bounded by calibrated openLimit/closeLimit).
-//   {"get": true}      -> {"pos": <int>}        current position
-//   {"set": <number>}  -> {"position": <int>}   move to raw position
+//   {"get": true}         -> {"pos": <int>}            current position
+//   {"set": <number>}     -> {"position": <int>}       move to raw position
+//   {"reactivate": true}  -> {"reactivated": true}     force socket re-dial and re-init
 func (g *robotiqGripper) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if cmd["reactivate"] == true {
+		if err := g.reactivate(ctx); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"reactivated": true}, nil
+	}
 	if cmd["get"] == true {
 		raw, err := g.Get("POS")
 		if err != nil {
