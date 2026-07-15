@@ -30,11 +30,11 @@ type Config struct {
 }
 
 // Validate ensures all parts of the config are valid.
-func (cfg *Config) Validate(path string) ([]string, error) {
+func (cfg *Config) Validate(path string) ([]string, []string, error) {
 	if cfg.Host == "" {
-		return nil, resource.NewConfigValidationFieldRequiredError(path, "host")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "host")
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func init() {
@@ -300,6 +300,30 @@ func (g *robotiqGripper) IsMoving(ctx context.Context) (bool, error) {
 // ModelFrame is unimplemented for robotiqGripper.
 func (g *robotiqGripper) ModelFrame() referenceframe.Model {
 	return nil
+}
+
+// Kinematics returns the kinematic model associated with the gripper.
+func (g *robotiqGripper) Kinematics(ctx context.Context) (referenceframe.Model, error) {
+	return nil, fmt.Errorf("Kinematics not supported")
+}
+
+// CurrentInputs returns the current inputs for the gripper (always empty for this gripper).
+func (g *robotiqGripper) CurrentInputs(ctx context.Context) ([]referenceframe.Input, error) {
+	return []referenceframe.Input{}, nil
+}
+
+// GoToInputs moves the gripper to the given inputs (unimplemented).
+func (g *robotiqGripper) GoToInputs(ctx context.Context, inputSteps ...[]referenceframe.Input) error {
+	return fmt.Errorf("GoToInputs not supported")
+}
+
+// IsHoldingSomething returns whether the gripper is currently holding onto an object.
+func (g *robotiqGripper) IsHoldingSomething(ctx context.Context, extra map[string]interface{}) (gripper.HoldingStatus, error) {
+	val, err := g.Get("OBJ")
+	if err != nil {
+		return gripper.HoldingStatus{}, err
+	}
+	return gripper.HoldingStatus{IsHoldingSomething: val == "OBJ 2"}, nil
 }
 
 // Geometries returns the geometries associated with robotiqGripper.
