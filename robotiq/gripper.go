@@ -9,7 +9,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -60,9 +59,7 @@ type robotiqGripper struct {
 	resource.Named
 	resource.AlwaysRebuild
 
-	// connMu serializes URCap access across the dial-per-send connections.
-	connMu sync.Mutex
-	host   string
+	host string
 
 	openLimit  string
 	closeLimit string
@@ -128,8 +125,6 @@ func (g *robotiqGripper) MultiSet(ctx context.Context, cmds [][]string) error {
 // Send runs one Robotiq command over a fresh TCP connection. Persistent sockets
 // to the PolyScope X URCap stall on reads after idle periods or hot-swaps.
 func (g *robotiqGripper) Send(msg string) (string, error) {
-	g.connMu.Lock()
-	defer g.connMu.Unlock()
 	conn, err := net.Dial("tcp", g.host+":63352")
 	if err != nil {
 		return "", err
