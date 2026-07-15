@@ -139,7 +139,7 @@ func (g *robotiqGripper) Send(msg string) (string, error) {
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		return "", err
 	}
-	return read(conn)
+	return g.read(conn)
 }
 
 // reactivate re-activates the gripper after a tool changer swap, which drops it
@@ -189,7 +189,7 @@ func (g *robotiqGripper) waitForActivation(ctx context.Context) error {
 	}
 }
 
-func read(conn net.Conn) (string, error) {
+func (g *robotiqGripper) read(conn net.Conn) (string, error) {
 	buf := make([]byte, 128)
 	x, err := conn.Read(buf)
 	if err != nil {
