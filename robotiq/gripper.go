@@ -134,8 +134,8 @@ func (g *robotiqGripper) Send(msg string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(sendTimeout))
+	defer utils.UncheckedErrorFunc(conn.Close)
+	utils.UncheckedError(conn.SetDeadline(time.Now().Add(sendTimeout)))
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		return "", err
 	}

@@ -5,7 +5,6 @@ import (
 	"context"
 
 	"github.com/viam-modules/robotiq/robotiq"
-
 	"go.viam.com/rdk/components/gripper"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/module"
