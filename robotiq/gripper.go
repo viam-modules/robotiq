@@ -83,12 +83,11 @@ func newGripper(ctx context.Context, conf resource.Config, host string, logger l
 		geometries: []spatialmath.Geometry{},
 	}
 
-	// Activate + calibrate on startup. If no gripper is coupled yet (a tool
-	// changer attaches one later and calls reactivate), don't fail construction
-	// or poison the limits: keep the safe defaults so the module comes up
-	// cleanly and we avoid construction-retry churn.
+	// Activate on startup. If no gripper is coupled yet (a tool changer attaches
+	// one later and calls reactivate), don't fail construction: come up cleanly
+	// with the default limits so we avoid construction-retry churn.
 	if err := g.reactivate(ctx); err != nil {
-		logger.CWarnf(ctx, "robotiq: initial activation/calibration failed "+
+		logger.CWarnf(ctx, "robotiq: initial activation failed "+
 			"(no gripper coupled yet?); using default limits open=%s close=%s: %v",
 			g.openLimit, g.closeLimit, err)
 	}
@@ -156,15 +155,17 @@ func (g *robotiqGripper) Send(msg string) (string, error) {
 	return strings.TrimSpace(string(buf[0:x])), nil
 }
 
-// reactivate re-activates the gripper and re-reads its travel limits. Use after
-// a tool changer swap: the physical disconnect drops the gripper to the reset
-// state (STA 0), and it must be re-activated before it will move.
+// reactivate re-activates the gripper. Use after a tool changer swap: the
+// physical disconnect drops the gripper to the reset state (STA 0), and it must
+// be re-activated before it will move.
 //
 // A bare "ACT 1" is not enough: activation only runs on a rACT 0->1 transition,
 // and after a swap the URCap can still hold rACT=1 while the gripper is
 // physically reset, so "ACT 1" would be a no-op. We explicitly clear rACT to 0
-// first to guarantee the transition, wait for activation to complete (STA 3),
-// then recalibrate so the limits reflect the now-attached gripper.
+// first to guarantee the transition, then wait for activation to complete
+// (STA 3). Activation runs the gripper's own open/close self-test, which leaves
+// it open and establishes the normalized 0..255 travel range, so no separate
+// calibration move is needed.
 func (g *robotiqGripper) reactivate(ctx context.Context) error {
 	if err := g.Set("ACT", "0"); err != nil {
 		return err
@@ -182,10 +183,7 @@ func (g *robotiqGripper) reactivate(ctx context.Context) error {
 	if err := g.MultiSet(ctx, init); err != nil {
 		return err
 	}
-	if err := g.waitForActivation(ctx); err != nil {
-		return err
-	}
-	return g.Calibrate(ctx)
+	return g.waitForActivation(ctx)
 }
 
 // activationTimeout bounds how long we wait for the gripper to finish
@@ -232,11 +230,10 @@ func (g *robotiqGripper) Get(what string) (string, error) {
 // SetPos returns true iff reached desired position.
 func (g *robotiqGripper) SetPos(ctx context.Context, pos string) (bool, error) {
 	// Never send a non-numeric target: the URCap silently ignores "SET POS ?"
-	// (which is what an uncalibrated limit would produce) and the read then
-	// blocks until the deadline. Fail fast with a clear message instead.
+	// and the read then blocks until the deadline. Fail fast instead.
 	if _, err := strconv.Atoi(pos); err != nil {
-		return false, errors.Errorf("invalid target position %q; gripper likely not "+
-			"calibrated (run DoCommand{\"reactivate\":true} after a tool swap)", pos)
+		return false, errors.Errorf("invalid target position %q; run "+
+			"DoCommand{\"reactivate\":true} after a tool swap", pos)
 	}
 
 	err := g.Set("POS", pos)
@@ -312,58 +309,6 @@ func (g *robotiqGripper) Grab(ctx context.Context, extra map[string]interface{})
 	return val == "OBJ 2", nil
 }
 
-// Calibrate discovers the physical open/close travel limits by driving the
-// fingers to each hard extreme and reading back where they actually stop. It
-// only stores numeric limits: if the URCap returns "POS ?" (no gripper coupled
-// or not activated) it returns an error rather than poisoning openLimit/
-// closeLimit with "?", which would later be sent as "SET POS ?" and hang.
-func (g *robotiqGripper) Calibrate(ctx context.Context) error {
-	if _, err := g.SetPos(ctx, "0"); err != nil {
-		return errors.Wrap(err, "calibrate: opening")
-	}
-	openLimit, err := g.readPos()
-	if err != nil {
-		return errors.Wrap(err, "calibrate: reading open limit")
-	}
-
-	if _, err := g.SetPos(ctx, "255"); err != nil {
-		return errors.Wrap(err, "calibrate: closing")
-	}
-	closeLimit, err := g.readPos()
-	if err != nil {
-		return errors.Wrap(err, "calibrate: reading close limit")
-	}
-
-	g.openLimit = strconv.Itoa(openLimit)
-	g.closeLimit = strconv.Itoa(closeLimit)
-	g.logger.CDebugf(ctx, "limits %s %s", g.openLimit, g.closeLimit)
-	return nil
-}
-
-// readPos reads and parses the current position, erroring on a non-numeric
-// value such as "POS ?".
-func (g *robotiqGripper) readPos() (int, error) {
-	raw, err := g.Get("POS")
-	if err != nil {
-		return 0, err
-	}
-	return parsePos(raw)
-}
-
-// parsePos parses a "POS <n>" response into an int, erroring on malformed or
-// non-numeric responses (e.g. "POS ?").
-func parsePos(raw string) (int, error) {
-	fields := strings.Fields(raw)
-	if len(fields) != 2 || fields[0] != "POS" {
-		return 0, errors.Errorf("unexpected POS response %q", raw)
-	}
-	n, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return 0, errors.Errorf("non-numeric POS value in %q", raw)
-	}
-	return n, nil
-}
-
 // Stop is unimplemented for robotiqGripper.
 func (g *robotiqGripper) Stop(ctx context.Context, extra map[string]interface{}) error {
 	// RSDK-388: Implement Stop
@@ -390,11 +335,11 @@ func (g *robotiqGripper) Geometries(ctx context.Context, extra map[string]interf
 }
 
 // DoCommand exposes raw position control and a manual reactivate action.
-// Raw Robotiq units: 0 = fully open, 255 = fully closed (bounded by calibrated openLimit/closeLimit).
+// Raw Robotiq units: 0 = fully open, 255 = fully closed.
 //
 //	{"get": true}         -> {"pos": <int>}            current position
 //	{"set": <number>}     -> {"position": <int>}       move to raw position
-//	{"reactivate": true}  -> {"reactivated": true}     force socket re-dial and re-init
+//	{"reactivate": true}  -> {"reactivated": true}     re-run gripper activation
 func (g *robotiqGripper) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if cmd["reactivate"] == true {
 		if err := g.reactivate(ctx); err != nil {
