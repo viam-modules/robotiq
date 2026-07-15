@@ -81,8 +81,8 @@ func newGripper(ctx context.Context, conf resource.Config, host string, logger l
 	}
 
 	// Don't fail construction if no gripper is coupled yet: a tool changer may
-	// attach one later and call reactivate. Avoids construction-retry churn.
-	if err := g.reactivate(ctx); err != nil {
+	// attach one later and call activate. Avoids construction-retry churn.
+	if err := g.activate(ctx); err != nil {
 		logger.CWarnf(ctx, "robotiq: initial activation failed "+
 			"(no gripper coupled yet?); using default limits open=%s close=%s: %v",
 			g.openLimit, g.closeLimit, err)
@@ -169,13 +169,14 @@ func (g *robotiqGripper) read(conn net.Conn) (string, error) {
 	return strings.TrimSpace(string(buf[0:x])), nil
 }
 
-// reactivate re-activates the gripper after a tool changer swap, which drops it
-// to the reset state (STA 0). We clear rACT to 0 before setting it to 1 because
-// activation only runs on a 0->1 transition, and after a swap the URCap can
-// still hold rACT=1 (so a bare "ACT 1" is a no-op). Activation runs the
-// gripper's own open/close self-test, which leaves it open and establishes the
-// normalized 0..255 travel range, so no separate calibration is needed.
-func (g *robotiqGripper) reactivate(ctx context.Context) error {
+// activate activates the gripper. Used at startup and after a tool changer swap,
+// which drops the gripper to the reset state (STA 0). We clear rACT to 0 before
+// setting it to 1 because activation only runs on a 0->1 transition, and after a
+// swap the URCap can still hold rACT=1 (so a bare "ACT 1" is a no-op). Activation
+// runs the gripper's own open/close self-test, which leaves it open and
+// establishes the normalized 0..255 travel range, so no separate calibration is
+// needed.
+func (g *robotiqGripper) activate(ctx context.Context) error {
 	if err := g.Set("ACT", "0"); err != nil {
 		return err
 	}
@@ -222,7 +223,7 @@ func (g *robotiqGripper) SetPos(ctx context.Context, pos string) (bool, error) {
 	// and the read then blocks until the deadline. Fail fast instead.
 	if _, err := strconv.Atoi(pos); err != nil {
 		return false, errors.Errorf("invalid target position %q; run "+
-			"DoCommand{\"reactivate\":true} after a tool swap", pos)
+			"DoCommand{\"activate\":true} after a tool swap", pos)
 	}
 
 	err := g.Set("POS", pos)
@@ -323,18 +324,18 @@ func (g *robotiqGripper) Geometries(ctx context.Context, extra map[string]interf
 	return g.geometries, nil
 }
 
-// DoCommand exposes raw position control and a manual reactivate action.
+// DoCommand exposes raw position control and a manual activate action.
 // Raw Robotiq units: 0 = fully open, 255 = fully closed.
 //
-//	{"get": true}         -> {"pos": <int>}            current position
-//	{"set": <number>}     -> {"position": <int>}       move to raw position
-//	{"reactivate": true}  -> {"reactivated": true}     re-run gripper activation
+//	{"get": true}       -> {"pos": <int>}          current position
+//	{"set": <number>}   -> {"position": <int>}     move to raw position
+//	{"activate": true}  -> {"activated": true}     re-run gripper activation
 func (g *robotiqGripper) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
-	if cmd["reactivate"] == true {
-		if err := g.reactivate(ctx); err != nil {
+	if cmd["activate"] == true {
+		if err := g.activate(ctx); err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"reactivated": true}, nil
+		return map[string]interface{}{"activated": true}, nil
 	}
 	if cmd["get"] == true {
 		raw, err := g.Get("POS")
