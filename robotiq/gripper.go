@@ -83,9 +83,8 @@ func newGripper(ctx context.Context, conf resource.Config, host string, logger l
 		geometries: []spatialmath.Geometry{},
 	}
 
-	// Activate on startup. If no gripper is coupled yet (a tool changer attaches
-	// one later and calls reactivate), don't fail construction: come up cleanly
-	// with the default limits so we avoid construction-retry churn.
+	// Don't fail construction if no gripper is coupled yet: a tool changer may
+	// attach one later and call reactivate. Avoids construction-retry churn.
 	if err := g.reactivate(ctx); err != nil {
 		logger.CWarnf(ctx, "robotiq: initial activation failed "+
 			"(no gripper coupled yet?); using default limits open=%s close=%s: %v",
@@ -126,9 +125,8 @@ func (g *robotiqGripper) MultiSet(ctx context.Context, cmds [][]string) error {
 	return nil
 }
 
-// Send dials a fresh TCP connection, writes one Robotiq command, reads the
-// response, and closes the connection. Persistent sockets to the PolyScope X
-// URCap stall on reads after idle periods or hot-swaps; fresh sockets always work.
+// Send runs one Robotiq command over a fresh TCP connection. Persistent sockets
+// to the PolyScope X URCap stall on reads after idle periods or hot-swaps.
 func (g *robotiqGripper) Send(msg string) (string, error) {
 	g.connMu.Lock()
 	defer g.connMu.Unlock()
@@ -155,17 +153,12 @@ func (g *robotiqGripper) Send(msg string) (string, error) {
 	return strings.TrimSpace(string(buf[0:x])), nil
 }
 
-// reactivate re-activates the gripper. Use after a tool changer swap: the
-// physical disconnect drops the gripper to the reset state (STA 0), and it must
-// be re-activated before it will move.
-//
-// A bare "ACT 1" is not enough: activation only runs on a rACT 0->1 transition,
-// and after a swap the URCap can still hold rACT=1 while the gripper is
-// physically reset, so "ACT 1" would be a no-op. We explicitly clear rACT to 0
-// first to guarantee the transition, then wait for activation to complete
-// (STA 3). Activation runs the gripper's own open/close self-test, which leaves
-// it open and establishes the normalized 0..255 travel range, so no separate
-// calibration move is needed.
+// reactivate re-activates the gripper after a tool changer swap, which drops it
+// to the reset state (STA 0). We clear rACT to 0 before setting it to 1 because
+// activation only runs on a 0->1 transition, and after a swap the URCap can
+// still hold rACT=1 (so a bare "ACT 1" is a no-op). Activation runs the
+// gripper's own open/close self-test, which leaves it open and establishes the
+// normalized 0..255 travel range, so no separate calibration is needed.
 func (g *robotiqGripper) reactivate(ctx context.Context) error {
 	if err := g.Set("ACT", "0"); err != nil {
 		return err
@@ -186,13 +179,10 @@ func (g *robotiqGripper) reactivate(ctx context.Context) error {
 	return g.waitForActivation(ctx)
 }
 
-// activationTimeout bounds how long we wait for the gripper to finish
-// activating before giving up (a healthy gripper activates in ~1-2s).
 const activationTimeout = 10 * time.Second
 
-// waitForActivation polls STA until the gripper reports 3 (activation complete),
-// the context is cancelled, or activationTimeout elapses. STA values: 0=reset,
-// 1/2=activating, 3=active.
+// waitForActivation polls until the gripper reports STA 3 (active), timing out
+// after activationTimeout. STA values: 0=reset, 1/2=activating, 3=active.
 func (g *robotiqGripper) waitForActivation(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, activationTimeout)
 	defer cancel()
