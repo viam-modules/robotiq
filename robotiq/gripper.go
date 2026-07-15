@@ -142,21 +142,6 @@ func (g *robotiqGripper) Send(msg string) (string, error) {
 	return read(conn)
 }
 
-func read(conn net.Conn) (string, error) {
-	buf := make([]byte, 128)
-	x, err := conn.Read(buf)
-	if err != nil {
-		return "", err
-	}
-	if x > 100 {
-		return "", errors.Errorf("read too much: %d", x)
-	}
-	if x == 0 {
-		return "", nil
-	}
-	return strings.TrimSpace(string(buf[0:x])), nil
-}
-
 // reactivate re-activates the gripper after a tool changer swap, which drops it
 // to the reset state (STA 0). We clear rACT to 0 before setting it to 1 because
 // activation only runs on a 0->1 transition, and after a swap the URCap can
@@ -202,6 +187,21 @@ func (g *robotiqGripper) waitForActivation(ctx context.Context) error {
 			return errors.Wrapf(ctx.Err(), "gripper did not finish activating (last STA=%q)", sta)
 		}
 	}
+}
+
+func read(conn net.Conn) (string, error) {
+	buf := make([]byte, 128)
+	x, err := conn.Read(buf)
+	if err != nil {
+		return "", err
+	}
+	if x > 100 {
+		return "", errors.Errorf("read too much: %d", x)
+	}
+	if x == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(string(buf[0:x])), nil
 }
 
 // Set TODO.
