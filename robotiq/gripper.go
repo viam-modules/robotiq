@@ -169,14 +169,36 @@ func (g *robotiqGripper) read(conn net.Conn) (string, error) {
 	return strings.TrimSpace(string(buf[0:x])), nil
 }
 
+// activationAttempts bounds how many times activate re-runs the ACT 0->1 cycle.
+// Right after a tool changer swap the freshly-coupled gripper is sometimes not
+// ready to accept the activation edge, so the first attempt can leave it stuck
+// in STA 0; re-issuing the edge once it's ready reliably activates it.
+const activationAttempts = 3
+
 // activate activates the gripper. Used at startup and after a tool changer swap,
 // which drops the gripper to the reset state (STA 0). We clear rACT to 0 before
 // setting it to 1 because activation only runs on a 0->1 transition, and after a
 // swap the URCap can still hold rACT=1 (so a bare "ACT 1" is a no-op). Activation
 // runs the gripper's own open/close self-test, which leaves it open and
 // establishes the normalized 0..255 travel range, so no separate calibration is
-// needed.
+// needed. A missed edge leaves STA at 0 indefinitely, so we retry the whole
+// cycle rather than wait longer on a doomed attempt.
 func (g *robotiqGripper) activate(ctx context.Context) error {
+	var err error
+	for attempt := 1; attempt <= activationAttempts; attempt++ {
+		if err = g.activateOnce(ctx); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		g.logger.CWarnf(ctx, "robotiq: activation attempt %d/%d failed, retrying: %v",
+			attempt, activationAttempts, err)
+	}
+	return err
+}
+
+func (g *robotiqGripper) activateOnce(ctx context.Context) error {
 	if err := g.Set("ACT", "0"); err != nil {
 		return err
 	}
@@ -196,7 +218,7 @@ func (g *robotiqGripper) activate(ctx context.Context) error {
 	return g.waitForActivation(ctx)
 }
 
-const activationTimeout = 10 * time.Second
+const activationTimeout = 5 * time.Second
 
 // waitForActivation polls until the gripper reports STA 3 (active), timing out
 // after activationTimeout. STA values: 0=reset, 1/2=activating, 3=active.
