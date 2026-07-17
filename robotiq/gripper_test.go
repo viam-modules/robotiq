@@ -24,8 +24,8 @@ func TestSetPosRejectsNonNumeric(t *testing.T) {
 // value it updates in response to SET ACT writes: SET ACT 0 -> STA 0, SET ACT
 // 1 -> STA 3 (instant activation).
 type fakeURCap struct {
-	ln  net.Listener
-	mu  sync.Mutex
+	ln   net.Listener
+	mu   sync.Mutex
 	seen []string
 	sta  string
 }
@@ -78,8 +78,6 @@ func (f *fakeURCap) handle(conn net.Conn) {
 	}
 	var resp string
 	switch {
-	case strings.HasPrefix(cmd, "SET "):
-		resp = "ack"
 	case cmd == "GET STA":
 		resp = "STA " + f.sta
 	default:
