@@ -21,6 +21,9 @@ import (
 	"go.viam.com/utils"
 )
 
+// Per-call URCap socket deadline so a half-dead connection can't block forever.
+const sendTimeout = 5 * time.Second
+
 // Model for viam supported robotiq 2f-grippers.
 var Model = resource.NewModel("viam", "robotiq", "2f-grippers")
 
@@ -56,7 +59,7 @@ type robotiqGripper struct {
 	resource.Named
 	resource.AlwaysRebuild
 
-	conn net.Conn
+	host string
 
 	openLimit  string
 	closeLimit string
@@ -67,35 +70,22 @@ type robotiqGripper struct {
 
 // newGripper instantiates a new Gripper of robotiqGripper type.
 func newGripper(ctx context.Context, conf resource.Config, host string, logger logging.Logger) (gripper.Gripper, error) {
-	conn, err := net.Dial("tcp", host+":63352")
-	if err != nil {
-		return nil, err
-	}
 	g := &robotiqGripper{
-		conf.ResourceName().AsNamed(),
-		resource.AlwaysRebuild{},
-		conn,
-		"0",
-		"255",
-		logger,
-		operation.NewSingleOperationManager(),
-		[]spatialmath.Geometry{},
+		Named:      conf.ResourceName().AsNamed(),
+		host:       host,
+		openLimit:  "0",
+		closeLimit: "255",
+		logger:     logger,
+		opMgr:      operation.NewSingleOperationManager(),
+		geometries: []spatialmath.Geometry{},
 	}
 
-	init := [][]string{
-		{"ACT", "1"},   // robot activate
-		{"GTO", "1"},   // gripper activate
-		{"FOR", "200"}, // force (0-255)
-		{"SPE", "255"}, // speed (0-255)
-	}
-	err = g.MultiSet(ctx, init)
-	if err != nil {
-		return nil, err
-	}
-
-	err = g.Calibrate(ctx) // TODO(erh): should this live elsewhere?
-	if err != nil {
-		return nil, err
+	// Don't fail construction if no gripper is coupled yet: a tool changer may
+	// attach one later and call activate. Avoids construction-retry churn.
+	if err := g.activate(ctx); err != nil {
+		logger.CWarnf(ctx, "robotiq: initial activation failed "+
+			"(no gripper coupled yet?); using default limits open=%s close=%s: %v",
+			g.openLimit, g.closeLimit, err)
 	}
 
 	if conf.Frame != nil && conf.Frame.Geometry != nil {
@@ -132,19 +122,19 @@ func (g *robotiqGripper) MultiSet(ctx context.Context, cmds [][]string) error {
 	return nil
 }
 
-// Send TODO.
+// Send runs one Robotiq command over a fresh TCP connection. Persistent sockets
+// to the PolyScope X URCap stall on reads after idle periods or hot-swaps.
 func (g *robotiqGripper) Send(msg string) (string, error) {
-	_, err := g.conn.Write([]byte(msg))
+	conn, err := net.Dial("tcp", g.host+":63352")
 	if err != nil {
 		return "", err
 	}
-
-	res, err := g.read()
-	if err != nil {
+	defer utils.UncheckedErrorFunc(conn.Close)
+	utils.UncheckedError(conn.SetDeadline(time.Now().Add(sendTimeout)))
+	if _, err := conn.Write([]byte(msg)); err != nil {
 		return "", err
 	}
-
-	return res, err
+	return g.read(conn)
 }
 
 // Set TODO.
@@ -164,9 +154,9 @@ func (g *robotiqGripper) Get(what string) (string, error) {
 	return g.Send(fmt.Sprintf("GET %s\r\n", what))
 }
 
-func (g *robotiqGripper) read() (string, error) {
+func (g *robotiqGripper) read(conn net.Conn) (string, error) {
 	buf := make([]byte, 128)
-	x, err := g.conn.Read(buf)
+	x, err := conn.Read(buf)
 	if err != nil {
 		return "", err
 	}
@@ -179,8 +169,68 @@ func (g *robotiqGripper) read() (string, error) {
 	return strings.TrimSpace(string(buf[0:x])), nil
 }
 
+// activationSettle lets a freshly-coupled gripper come online before we drive the
+// activation edge. Right after a tool changer swap the gripper answers GET STA
+// but isn't yet ready to accept ACT 1, so an immediate edge is missed and
+// activation stalls at STA 0. Only the DoCommand (post-swap) path waits this out.
+const activationSettle = 2 * time.Second
+
+// activate runs one ACT 0->1 activation cycle and waits for the gripper to finish
+// activating (STA 3). We clear rACT to 0 before setting it to 1 because activation
+// only runs on a 0->1 transition, and after a swap the URCap can still hold
+// rACT=1 (so a bare "ACT 1" is a no-op). Activation runs the gripper's own
+// open/close self-test, which leaves it open and establishes the normalized
+// 0..255 travel range, so no separate calibration is needed.
+func (g *robotiqGripper) activate(ctx context.Context) error {
+	if err := g.Set("ACT", "0"); err != nil {
+		return err
+	}
+	if !utils.SelectContextOrWait(ctx, 500*time.Millisecond) {
+		return ctx.Err()
+	}
+
+	init := [][]string{
+		{"ACT", "1"},
+		{"GTO", "1"},
+		{"FOR", "200"},
+		{"SPE", "255"},
+	}
+	if err := g.MultiSet(ctx, init); err != nil {
+		return err
+	}
+	return g.waitForActivation(ctx)
+}
+
+const activationTimeout = 5 * time.Second
+
+// waitForActivation polls until the gripper reports STA 3 (active), timing out
+// after activationTimeout. STA values: 0=reset, 1/2=activating, 3=active.
+func (g *robotiqGripper) waitForActivation(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, activationTimeout)
+	defer cancel()
+	for {
+		sta, err := g.Get("STA")
+		if err != nil {
+			return err
+		}
+		if sta == "STA 3" {
+			return nil
+		}
+		if !utils.SelectContextOrWait(ctx, 100*time.Millisecond) {
+			return errors.Wrapf(ctx.Err(), "gripper did not finish activating (last STA=%q)", sta)
+		}
+	}
+}
+
 // SetPos returns true iff reached desired position.
 func (g *robotiqGripper) SetPos(ctx context.Context, pos string) (bool, error) {
+	// Never send a non-numeric target: the URCap silently ignores "SET POS ?"
+	// and the read then blocks until the deadline. Fail fast instead.
+	if _, err := strconv.Atoi(pos); err != nil {
+		return false, errors.Errorf("invalid target position %q; run "+
+			"DoCommand{\"activate\":true} after a tool swap", pos)
+	}
+
 	err := g.Set("POS", pos)
 	if err != nil {
 		return false, err
@@ -254,34 +304,6 @@ func (g *robotiqGripper) Grab(ctx context.Context, extra map[string]interface{})
 	return val == "OBJ 2", nil
 }
 
-// Calibrate TODO.
-func (g *robotiqGripper) Calibrate(ctx context.Context) error {
-	err := g.Open(ctx, map[string]interface{}{})
-	if err != nil {
-		return err
-	}
-
-	x, err := g.Get("POS")
-	if err != nil {
-		return err
-	}
-	g.openLimit = x[4:]
-
-	err = g.Close(ctx)
-	if err != nil {
-		return err
-	}
-
-	x, err = g.Get("POS")
-	if err != nil {
-		return err
-	}
-	g.closeLimit = x[4:]
-
-	g.logger.CDebugf(ctx, "limits %s %s", g.openLimit, g.closeLimit)
-	return nil
-}
-
 // Stop is unimplemented for robotiqGripper.
 func (g *robotiqGripper) Stop(ctx context.Context, extra map[string]interface{}) error {
 	// RSDK-388: Implement Stop
@@ -307,12 +329,24 @@ func (g *robotiqGripper) Geometries(ctx context.Context, extra map[string]interf
 	return g.geometries, nil
 }
 
-// DoCommand exposes raw position control.
-// Raw Robotiq units: 0 = fully open, 255 = fully closed (bounded by calibrated openLimit/closeLimit).
+// DoCommand exposes raw position control and a manual activate action.
+// Raw Robotiq units: 0 = fully open, 255 = fully closed.
 //
-//	{"get": true}      -> {"pos": <int>}        current position
-//	{"set": <number>}  -> {"position": <int>}   move to raw position
+//	{"get": true}       -> {"pos": <int>}          current position
+//	{"set": <number>}   -> {"position": <int>}     move to raw position
+//	{"activate": true}  -> {"activated": true}     re-run gripper activation
 func (g *robotiqGripper) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if cmd["activate"] == true {
+		// A freshly swapped gripper needs a moment before it will accept the
+		// activation edge, so settle before activating.
+		if !utils.SelectContextOrWait(ctx, activationSettle) {
+			return nil, ctx.Err()
+		}
+		if err := g.activate(ctx); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"activated": true}, nil
+	}
 	if cmd["get"] == true {
 		raw, err := g.Get("POS")
 		if err != nil {
