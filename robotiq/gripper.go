@@ -304,7 +304,7 @@ func (g *robotiqGripper) ModelFrame() referenceframe.Model {
 
 // Kinematics returns the kinematic model associated with the gripper.
 func (g *robotiqGripper) Kinematics(ctx context.Context) (referenceframe.Model, error) {
-	return nil, fmt.Errorf("Kinematics not supported")
+	return nil, errors.New("Kinematics not supported")
 }
 
 // CurrentInputs returns the current inputs for the gripper (always empty for this gripper).
@@ -314,7 +314,7 @@ func (g *robotiqGripper) CurrentInputs(ctx context.Context) ([]referenceframe.In
 
 // GoToInputs moves the gripper to the given inputs (unimplemented).
 func (g *robotiqGripper) GoToInputs(ctx context.Context, inputSteps ...[]referenceframe.Input) error {
-	return fmt.Errorf("GoToInputs not supported")
+	return errors.New("GoToInputs not supported")
 }
 
 // IsHoldingSomething returns whether the gripper is currently holding onto an object.
