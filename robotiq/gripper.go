@@ -54,7 +54,6 @@ func init() {
 // robotiqGripper TODO.
 type robotiqGripper struct {
 	resource.Named
-	resource.AlwaysRebuild
 
 	conn net.Conn
 
@@ -72,14 +71,13 @@ func newGripper(ctx context.Context, conf resource.Config, host string, logger l
 		return nil, err
 	}
 	g := &robotiqGripper{
-		conf.ResourceName().AsNamed(),
-		resource.AlwaysRebuild{},
-		conn,
-		"0",
-		"255",
-		logger,
-		operation.NewSingleOperationManager(),
-		[]spatialmath.Geometry{},
+		Named:      conf.ResourceName().AsNamed(),
+		conn:       conn,
+		openLimit:  "0",
+		closeLimit: "255",
+		logger:     logger,
+		opMgr:      operation.NewSingleOperationManager(),
+		geometries: []spatialmath.Geometry{},
 	}
 
 	init := [][]string{
