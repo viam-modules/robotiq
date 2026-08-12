@@ -9,8 +9,8 @@ require (
 	github.com/fullstorydev/grpcurl v1.8.6
 	github.com/pkg/errors v0.9.1
 	github.com/rhysd/actionlint v1.7.8
-	go.viam.com/rdk v1.1.0
-	go.viam.com/utils v0.8.1
+	go.viam.com/rdk v1.3.0
+	go.viam.com/utils v0.10.1
 	gotest.tools/gotestsum v1.12.2
 )
 
