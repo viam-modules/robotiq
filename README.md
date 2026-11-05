@@ -54,6 +54,20 @@ resp, err := gripperComponent.DoCommand(context.Background(), map[string]interfa
 // resp["position"] contains the commanded position
 ```
 
+### Collision geometry
+
+The gripper reports a static (0-DoF) kinematic model, so it appears in the frame system, the 3D visualizer and motion planning. By default it carries four boxes approximating a 2F-85 in its fully open pose:
+
+| Box | Size X × Y × Z (mm) | Notes |
+| --- | ------------------- | ----- |
+| `body` | 85 × 75 × 90 | Chassis, from the mounting face |
+| `linkage` | 150 × 40 × 60 | Knuckles, full open width |
+| `finger-left`, `finger-right` | 15 × 40 × 50 each | Fingertips at x = ±50 mm; the gap between the pads stays free for grasped objects |
+
+X is the jaw travel axis and Z points out of the gripper. The frame origin is the closed fingertip: the mounting face sits 163 mm behind it, so set the component's frame `translation` to the TCP offset from the arm flange (coupling thickness + 163 mm, about `z: 174` on a UR coupling). The coupling is not modeled.
+
+To use your own shape instead (for example on a 2F-140), set `frame.geometry` on the component; it replaces the default boxes.
+
 ### Next Steps
 - To test your gripper, expand the **TEST** section of its configuration pane or go to the [**CONTROL** tab](https://docs.viam.com/fleet/control/).
 - To write code against your gripper, use one of the [available SDKs](https://docs.viam.com/sdks/).

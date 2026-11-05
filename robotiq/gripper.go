@@ -5,12 +5,14 @@ package robotiq
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/golang/geo/r3"
 	"github.com/pkg/errors"
 	"go.viam.com/rdk/components/gripper"
 	"go.viam.com/rdk/logging"
@@ -62,6 +64,73 @@ type robotiqGripper struct {
 	logger     logging.Logger
 	opMgr      *operation.SingleOperationManager
 	geometries []spatialmath.Geometry
+	model      referenceframe.Model
+}
+
+// 2F-85 collision envelope, measured from the ROS-Industrial robotiq_2f_85 URDF + collision meshes
+// (matches the datasheet: 85 mm stroke, ~148 mm wide open, ~163 mm mounting face to closed
+// fingertip). Units mm; X is the jaw travel axis, Z points out of the gripper.
+//
+// The gripper frame origin is taken to be the closed fingertip, i.e. the frame is configured with
+// the TCP offset from the arm flange (coupling + 163 mm, e.g. z ~ 174 on a UR coupling). The
+// mounting face therefore sits at Z = -mountToTip. The coupling itself is not modeled.
+//
+// The fingertips are separate boxes, sized for the fully open pose, so the space between the pads
+// stays free and a grasped object does not register as a collision.
+const mountToTip = 163.0
+
+type boxSpec struct {
+	label  string
+	center r3.Vector // relative to the mounting face
+	dims   r3.Vector
+}
+
+var geometry2F85 = []boxSpec{
+	{"body", r3.Vector{Z: 45}, r3.Vector{X: 85, Y: 75, Z: 90}},                 // chassis, z 0..90
+	{"linkage", r3.Vector{Z: 75}, r3.Vector{X: 150, Y: 40, Z: 60}},             // knuckles, z 45..105, +-74 open
+	{"finger-left", r3.Vector{X: -50, Z: 125}, r3.Vector{X: 15, Y: 40, Z: 50}}, // pad + inner finger, |x| 43..57
+	{"finger-right", r3.Vector{X: 50, Z: 125}, r3.Vector{X: 15, Y: 40, Z: 50}},
+}
+
+// defaultGeometries returns the 2F-85 collision boxes in the gripper frame.
+func defaultGeometries() ([]spatialmath.Geometry, error) {
+	geoms := make([]spatialmath.Geometry, 0, len(geometry2F85))
+	for _, b := range geometry2F85 {
+		c := b.center
+		c.Z -= mountToTip
+		box, err := spatialmath.NewBox(spatialmath.NewPoseFromPoint(c), b.dims, b.label)
+		if err != nil {
+			return nil, err
+		}
+		geoms = append(geoms, box)
+	}
+	return geoms, nil
+}
+
+// geometryModel wraps geometries in a 0-DoF model. RDK drops grippers whose Kinematics errors
+// from the frame system, so without this the gripper is invisible to motion planning.
+func geometryModel(name string, geoms []spatialmath.Geometry) (referenceframe.Model, error) {
+	cfg := &referenceframe.ModelConfigJSON{Name: name}
+	parent := referenceframe.World
+	for _, geom := range geoms {
+		frame, err := referenceframe.NewStaticFrameWithGeometry(geom.Label(), spatialmath.NewZeroPose(), geom)
+		if err != nil {
+			return nil, err
+		}
+		link, err := referenceframe.NewLinkConfig(frame)
+		if err != nil {
+			return nil, err
+		}
+		link.Parent = parent
+		parent = geom.Label()
+		cfg.Links = append(cfg.Links, *link)
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	cfg.OriginalFile = &referenceframe.ModelFile{Bytes: raw, Extension: "json"}
+	return cfg.ParseConfig(name)
 }
 
 // newGripper instantiates a new Gripper of robotiqGripper type.
@@ -102,6 +171,15 @@ func newGripper(ctx context.Context, conf resource.Config, host string, logger l
 			return nil, err
 		}
 		g.geometries = []spatialmath.Geometry{geometry}
+	} else {
+		g.geometries, err = defaultGeometries()
+		if err != nil {
+			return nil, err
+		}
+	}
+	g.model, err = geometryModel(conf.Name, g.geometries)
+	if err != nil {
+		return nil, err
 	}
 
 	return g, nil
@@ -295,14 +373,14 @@ func (g *robotiqGripper) IsMoving(ctx context.Context) (bool, error) {
 	return g.opMgr.OpRunning(), nil
 }
 
-// ModelFrame is unimplemented for robotiqGripper.
+// ModelFrame returns the gripper's static geometry model.
 func (g *robotiqGripper) ModelFrame() referenceframe.Model {
-	return nil
+	return g.model
 }
 
-// Kinematics returns the kinematic model associated with the gripper.
+// Kinematics returns a 0-DoF model carrying the gripper's collision geometry.
 func (g *robotiqGripper) Kinematics(ctx context.Context) (referenceframe.Model, error) {
-	return nil, errors.New("Kinematics not supported")
+	return g.model, nil
 }
 
 // CurrentInputs returns the current inputs for the gripper (always empty for this gripper).

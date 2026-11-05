@@ -7,6 +7,7 @@ require (
 	github.com/axw/gocov v1.1.0
 	github.com/edaniels/golinters v0.0.5-0.20220906153528-641155550742
 	github.com/fullstorydev/grpcurl v1.8.6
+	github.com/golang/geo v0.0.0-20230421003525-6adc56603217
 	github.com/pkg/errors v0.9.1
 	github.com/rhysd/actionlint v1.7.8
 	go.viam.com/rdk v1.15.0
@@ -97,7 +98,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
-	github.com/golang/geo v0.0.0-20230421003525-6adc56603217 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
