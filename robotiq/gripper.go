@@ -6,9 +6,11 @@ package robotiq
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -55,7 +57,8 @@ func init() {
 type robotiqGripper struct {
 	resource.Named
 
-	conn net.Conn
+	conn   net.Conn
+	connMu sync.Mutex // serializes request/response pairs on conn
 
 	openLimit  string
 	closeLimit string
@@ -132,6 +135,9 @@ func (g *robotiqGripper) MultiSet(ctx context.Context, cmds [][]string) error {
 
 // Send TODO.
 func (g *robotiqGripper) Send(msg string) (string, error) {
+	g.connMu.Lock()
+	defer g.connMu.Unlock()
+
 	_, err := g.conn.Write([]byte(msg))
 	if err != nil {
 		return "", err
@@ -332,8 +338,12 @@ func (g *robotiqGripper) Geometries(ctx context.Context, extra map[string]interf
 // DoCommand exposes raw position control.
 // Raw Robotiq units: 0 = fully open, 255 = fully closed (bounded by calibrated openLimit/closeLimit).
 //
-//	{"get": true}      -> {"pos": <int>}        current position
-//	{"set": <number>}  -> {"position": <int>}   move to raw position
+//	{"get": true}                     -> {"pos": <int>}        current position
+//	{"set": <number>}                 -> {"position": <int>}   move to raw position, block until it stops
+//	{"set": <number>, "wait": false}  -> {"position": <int>}   send the target and return immediately
+//
+// "wait": false is for streaming targets (teleop): the gripper retargets mid-motion, so each
+// new command preempts the last without waiting for the jaw to arrive.
 func (g *robotiqGripper) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if cmd["get"] == true {
 		raw, err := g.Get("POS")
@@ -347,14 +357,22 @@ func (g *robotiqGripper) DoCommand(ctx context.Context, cmd map[string]interface
 		return map[string]interface{}{"pos": pos}, nil
 	}
 	if posF, ok := cmd["set"].(float64); ok {
+		pos := int(math.Round(math.Max(0, math.Min(255, posF))))
+
+		// Starting a new operation cancels any in-flight Open/Close/blocking set poll loop.
 		ctx, done := g.opMgr.New(ctx)
 		defer done()
 
-		pos := int(posF)
+		if wait, ok := cmd["wait"].(bool); ok && !wait {
+			if err := g.Set("POS", strconv.Itoa(pos)); err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"position": pos}, nil
+		}
 		if _, err := g.SetPos(ctx, strconv.Itoa(pos)); err != nil {
 			return nil, err
 		}
 		return map[string]interface{}{"position": pos}, nil
 	}
-	return map[string]interface{}{}, nil
+	return nil, errors.Errorf("unknown command %v; expected {\"get\": true} or {\"set\": <0-255>}", cmd)
 }

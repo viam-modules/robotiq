@@ -42,16 +42,29 @@ The following attributes are available for `viam:robotiq:2f-grippers` grippers:
 
 ### DoCommand
 
-Raw position control. Robotiq units: `0` = fully open, `255` = fully closed (bounded by the calibrated open/close limits detected at startup).
+Raw position control. Robotiq units: `0` = fully open, `255` = fully closed (bounded by the calibrated open/close limits detected at startup). Any other command returns an error.
 
-```go
-// Get the current position
-resp, err := gripperComponent.DoCommand(context.Background(), map[string]interface{}{"get": true})
-// resp["pos"] contains the position
+**`get`** — Read the current jaw position.
+```json
+{ "get": true }
+```
+Returns:
+```json
+{ "pos": 230 }
+```
 
-// Move to a specific position
-resp, err := gripperComponent.DoCommand(context.Background(), map[string]interface{}{"set": 128.0})
-// resp["position"] contains the commanded position
+**`set`** — Move the jaw to a raw position. Values are clamped to `0`–`255` and rounded. Blocks until the jaw stops (arrives or stalls on an object) unless `wait` is `false`.
+```json
+{ "set": 128 }
+```
+Returns:
+```json
+{ "position": 128 }
+```
+
+With `"wait": false` the target is sent and the call returns immediately. The gripper retargets mid-motion, so a stream of these (e.g. from teleop at 60 Hz) tracks the latest value without waiting for the jaw to arrive.
+```json
+{ "set": 128, "wait": false }
 ```
 
 ### Next Steps
